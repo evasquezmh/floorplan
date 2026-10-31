@@ -121,6 +121,35 @@ test('the Claude Code CLI comes first for a map Claude built, with read-only too
   assert.equal(second.args[second.args.indexOf('--resume') + 1], 'test-session');
 });
 
+test('a session that reads as a flag is never passed to the CLI', async () => {
+  const s = await serve({ FLOORPLAN_CLAUDE: path.join(FAKE, 'fake-claude.mjs'), FLOORPLAN_CODEX: path.join(root, 'no-such-cli') });
+  await ask(s, 'Anything?', '--dangerously-skip-permissions');
+  const [call] = s.calls();
+  assert.ok(!call.args.includes('--resume') && !call.args.includes('--dangerously-skip-permissions'), call.args.join(' '));
+});
+
+/** Starts a question and resolves once the server has said which run it is: { id, done } (done: the rest of its events). */
+async function startAsk(s, question) {
+  const r = await fetch(s.base + '/api/ask', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': s.token }, body: JSON.stringify({ question }) });
+  const reader = r.body.getReader(), dec = new TextDecoder();
+  let text = '';
+  while (!/event: start/.test(text)) text += dec.decode((await reader.read()).value, { stream: true });
+  const done = (async () => { for (;;) { const { value, done } = await reader.read(); if (done) return text; text += dec.decode(value, { stream: true }); } })();
+  return { id: /"id":"(\w+)"/.exec(text)[1], done };
+}
+
+test('Stop cancels only the question it was pressed for', async () => {
+  const s = await serve({ FAKE_HOLD: '1', FLOORPLAN_CLAUDE: path.join(FAKE, 'fake-claude.mjs'), FLOORPLAN_CODEX: path.join(root, 'no-such-cli') });
+  const a = await startAsk(s, 'First tab'), b = await startAsk(s, 'Second tab');
+  const cancel = (id) => fetch(s.base + '/api/cancel', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': s.token }, body: JSON.stringify({ id }) });
+  assert.equal((await cancel(a.id)).status, 204);
+  assert.match(await a.done, /event: failure/);
+  const still = await Promise.race([b.done.then(() => 'ended'), new Promise((r) => setTimeout(() => r('running'), 500))]);
+  assert.equal(still, 'running');
+  await cancel(b.id);
+  assert.match(await b.done, /event: failure/);
+});
+
 test('--engine picks one CLI and never falls back to the other', async () => {
   const s = await serve({ FLOORPLAN_ENGINE: 'codex', FLOORPLAN_CLAUDE: path.join(FAKE, 'fake-claude.mjs'), FLOORPLAN_CODEX: path.join(root, 'no-such-cli') });
   assert.equal(s.page.cli, false);

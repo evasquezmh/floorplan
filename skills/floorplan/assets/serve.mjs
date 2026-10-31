@@ -28,7 +28,10 @@ const readState = () => { try { return JSON.parse(fs.readFileSync(stateFile, 'ut
 if (has('stop')) {
   const s = readState();
   let stopped = false;
-  if (s?.pid) { try { process.kill(s.pid); stopped = true; } catch {} }
+  // after a crash or reboot the recorded pid may belong to something else: only stop it if the server answers to it
+  const live = s?.url && await fetch(s.url + '/api/status', { headers: { 'x-floorplan-token': s.token }, signal: AbortSignal.timeout(3000) })
+    .then((r) => r.ok ? r.json() : null).catch(() => null);
+  if (live?.pid === s.pid) { try { process.kill(s.pid); stopped = true; } catch {} }
   try { fs.unlinkSync(stateFile); } catch {}
   console.log(stopped ? `Stopped the map server (${s.url}).` : 'The map server was not running.');
   process.exit(0);
@@ -309,7 +312,7 @@ function claudeRun(body, mode) {
   const args = [...cli.args, '-p', '--output-format', 'stream-json', '--verbose',
     '--json-schema', JSON.stringify(mode.schema), '--append-system-prompt', mode.instructions,
     '--tools', 'Read,Grep,Glob,Bash', '--allowedTools', 'Bash(node floorplan/query.mjs:*)', 'Read', 'Grep', 'Glob'];
-  if (body.session) args.push('--resume', String(body.session));
+  if (/^\w[\w-]{0,127}$/.test(body.session || '')) args.push('--resume', body.session);
   if (model) args.push('--model', model);
   return {
     args, input: String(body.question || '').slice(0, 4000),
@@ -568,7 +571,17 @@ const server = http.createServer((req, res) => {
       const r = changing ? { ok: false, error: 'A change is still being made.' } : undoChange();
       res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(r));
     }
-    if (req.method === 'POST' && url.pathname === '/api/cancel') { for (const c of running.values()) c.kill(); res.writeHead(204); return res.end(); }
+    // Stop cancels the question it was asked for (an older page sends no id: everything)
+    if (req.method === 'POST' && url.pathname === '/api/cancel') {
+      let raw = '';
+      req.on('data', (d) => { raw += d; if (raw.length > 2000) req.destroy(); });
+      req.on('end', () => {
+        let body = {}; try { body = JSON.parse(raw); } catch {}
+        if (body.id) running.get(body.id)?.kill(); else for (const c of running.values()) c.kill();
+        res.writeHead(204); res.end();
+      });
+      return;
+    }
     if (req.method === 'POST' && url.pathname === '/api/export') {
       let raw = '';
       req.on('data', (d) => { raw += d; if (raw.length > 500000) req.destroy(); });

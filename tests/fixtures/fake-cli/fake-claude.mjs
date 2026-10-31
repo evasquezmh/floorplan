@@ -10,6 +10,8 @@ process.stdin.on('end', () => {
   fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ args, input }) + '\n');
   const out = (ev) => console.log(JSON.stringify(ev));
   out({ type: 'system', subtype: 'init', session_id: 'test-session' });
+  // a question that is still being worked on, until it's stopped
+  if (process.env.FAKE_HOLD) { setTimeout(() => {}, 60000); return; }
   // a change to a blueprint: answer with the next reply in $FAKE_CHANGES (a JSON array), one per run
   const schema = args[args.indexOf('--json-schema') + 1] || '';
   if (process.env.FAKE_CHANGES && schema.includes('"architecture"')) {

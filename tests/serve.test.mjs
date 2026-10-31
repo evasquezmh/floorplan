@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { shopApp, scanAndBuild, cleanup } from './helpers.mjs';
+import { SKILL, shopApp, scanAndBuild, cleanup } from './helpers.mjs';
 
 let root, server, base, token;
 before(async () => {
@@ -87,4 +87,22 @@ test('files outside the map folder are never served', async () => {
 test('a malformed address gets an error, and the server keeps running', async () => {
   assert.equal((await fetch(base + '/%E0%A4%A')).status, 400);
   assert.equal((await fetch(base + '/')).status, 200);
+});
+
+test('--stop leaves alone a process that only has the recorded pid', async () => {
+  // after a crash or reboot, the pid in server.json can belong to anything
+  const dir = fs.mkdtempSync(path.join(root, 'stale-'));
+  fs.copyFileSync(path.join(SKILL, 'assets', 'serve.mjs'), path.join(dir, 'serve.mjs'));
+  const other = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+  try {
+    fs.mkdirSync(path.join(dir, '.cache'));
+    fs.writeFileSync(path.join(dir, '.cache', 'server.json'), JSON.stringify({ pid: other.pid, port: 1, url: 'http://127.0.0.1:1', token: 'x' }));
+    const out = await new Promise((resolve) => {
+      const p = spawn(process.execPath, [path.join(dir, 'serve.mjs'), '--stop'], { stdio: ['ignore', 'pipe', 'inherit'] });
+      let text = ''; p.stdout.on('data', (d) => { text += d; }); p.on('exit', () => resolve(text));
+    });
+    assert.match(out, /was not running/);
+    assert.equal(other.exitCode, null, 'the unrelated process is still running');
+    assert.equal(other.signalCode, null);
+  } finally { other.kill(); }
 });

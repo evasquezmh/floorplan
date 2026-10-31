@@ -1895,7 +1895,7 @@ function highlightFlow(a, b) {
 
 // ======================= ask (Claude Code CLI or Codex via serve.mjs, or the Claude app) =======================
 const Q = createGraphQuery(G);
-const askState = { engine: null, sample: null, busy: false, ctl: null, session: null, turns: [], last: null };
+const askState = { engine: null, sample: null, busy: false, ctl: null, run: null, session: null, turns: [], last: null };
 const askInput = $('#ask-input'), askSend = $('#ask-send'), sheet = $('#ask-sheet'), warn = $('#ask-warn');
 const DOCS = 'https://docs.claude.com/en/docs/claude-code/overview'; // the Claude app's tip: install the CLI
 const WARNINGS = {
@@ -2019,7 +2019,7 @@ function setBusy(b) {
 }
 function cancelAsk() {
   askState.ctl?.abort();
-  if (askState.engine === 'cli') fetch('/api/cancel', { method: 'POST', headers: { 'x-floorplan-token': window.FLOORPLAN_SERVER.token } }).catch(() => {});
+  if (askState.engine === 'cli') fetch('/api/cancel', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': window.FLOORPLAN_SERVER.token }, body: JSON.stringify({ id: askState.run }) }).catch(() => {});
 }
 
 // ---------- changing a blueprint from the map (served by serve.mjs) ----------
@@ -2102,7 +2102,8 @@ async function askViaCli(question, progress, mode = 'ask') {
     while ((i = buf.indexOf('\n\n')) >= 0) {
       const block = buf.slice(0, i); buf = buf.slice(i + 2);
       const ev = /^event: (.*)$/m.exec(block)?.[1], data = JSON.parse(/^data: (.*)$/m.exec(block)?.[1] || 'null');
-      if (ev === 'progress') progress(data.text);
+      if (ev === 'start') askState.run = data.id;
+      else if (ev === 'progress') progress(data.text);
       else if (ev === 'answer') { answer = data; if (mode === 'ask') askState.session = data.session || askState.session; }
       else if (ev === 'failure') throw data;
     }
@@ -2275,7 +2276,10 @@ phoneQuery.addEventListener('change', placeZoom); placeZoom();
 $('#btn-panel').onclick = () => setPanel(document.body.classList.contains('no-panel'));
 Object.assign(state.kinds, store.get('kinds', {}));
 window.addEventListener('keydown', (ev) => {
-  if (pal.classList.contains('open') || ev.target.tagName === 'INPUT') return;
+  // typing in a box (the ask bar, a flow request) is text, not map shortcuts; an open dialog takes only Escape
+  if (pal.classList.contains('open') || ev.target.closest?.('input, textarea, select, [contenteditable]')) return;
+  const modal = $('#modal');
+  if (modal.classList.contains('open')) { if (ev.key === 'Escape') modal.classList.remove('open'); return; }
   if (ev.key === '/' || (ev.key === 'k' && (ev.metaKey || ev.ctrlKey))) { ev.preventDefault(); openPalette(); }
   else if (ev.key === 'Backspace') { ev.preventDefault(); up(); }
   else if (ev.key === 'Escape') {
