@@ -17,6 +17,9 @@ export function createResolver(root, files) {
   const dirsWith = (name) => files.filter((f) => P.basename(f.path) === name).map((f) => P.dirname(f.path));
 
   // ---- JS: tsconfig/jsconfig paths + workspace packages ----
+  // like TypeScript: an exact pattern first, then the longest text before the `*` (`@/components/*` before `@/*`)
+  const prefix = (pattern) => pattern.includes('*') ? pattern.indexOf('*') : 1e9;
+  const byPrefix = ([a], [b]) => prefix(b) - prefix(a);
   const tsconfigCache = new Map();
   const loadTsconfig = (file) => {
     if (tsconfigCache.has(file)) return tsconfigCache.get(file);
@@ -32,7 +35,7 @@ export function createResolver(root, files) {
         if (base) { opts = base.raw; optsDir = base.optsDir; }
       }
       const baseDir = opts.baseUrl ? P.normalize(P.join(optsDir, opts.baseUrl)) : optsDir;
-      cfg = { raw: opts, optsDir, baseDir, hasBaseUrl: !!opts.baseUrl, paths: Object.entries(opts.paths || {}) };
+      cfg = { raw: opts, optsDir, baseDir, hasBaseUrl: !!opts.baseUrl, paths: Object.entries(opts.paths || {}).sort(byPrefix) };
     }
     tsconfigCache.set(file, cfg);
     return cfg;
@@ -247,7 +250,7 @@ export function createResolver(root, files) {
       case 'java': case 'kotlin': case 'scala': case 'groovy': return resolveJvm(file.path, imp.spec);
       case 'ruby': return resolveRelative(file.path, imp.spec, ['.rb']);
       case 'php': return resolveRelative(file.path, imp.spec, ['.php']);
-      case 'css': return resolveRelative(file.path, imp.spec, ['.css', '.scss', '.sass', '.less']).file ? resolveRelative(file.path, imp.spec, ['.css', '.scss']) : resolveRelative(file.path, P.join(P.dirname(imp.spec), '_' + P.basename(imp.spec)), ['.scss', '.sass']);
+      case 'css': { const hit = resolveRelative(file.path, imp.spec, ['.css', '.scss', '.sass', '.less']); return hit.file ? hit : resolveRelative(file.path, P.join(P.dirname(imp.spec), '_' + P.basename(imp.spec)), ['.scss', '.sass']); }
       default: return resolveRelative(file.path, imp.spec, []);
     }
   };
