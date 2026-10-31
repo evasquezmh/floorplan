@@ -82,3 +82,22 @@ test('doc comments: JSDoc is cleaned, license headers are ignored', () => {
   assert.equal(cleanDoc('/**\n * Lists orders.\n * @param x\n */'), 'Lists orders.');
   assert.equal(cleanDoc('# Copyright 2020 Example Corp'), null);
 });
+
+test('Express: middleware on a require() mount is kept', () => {
+  const r = extract(`app.use('/admin', requireStaff, auth.check, require('./admin'));\n`, 'javascript', 'server.js');
+  assert.deepEqual(r.mounts.map((m) => [m.prefix, m.spec, m.mw]), [['/admin', './admin', ['requireStaff', 'check']]]);
+});
+
+test('Comment stripping leaves strings, templates and regexes alone', () => {
+  const r = extract([
+    `import express from 'express';`,
+    `const router = express.Router();`,
+    `router.get('/files/*', serve); // catch-all`,
+    `const re = /\\/\\*/; const url = \`http://\${host}/x\`;`,
+    `router.get('/health', ok);`,
+    `/** Admin routes. */`,
+    `router.post('/admin', admin);`,
+    `/* router.get('/gone', old); */`,
+  ].join('\n'), 'javascript', 'api/files.js');
+  assert.deepEqual(r.routes.map((x) => `${x.method} ${x.path} @${x.line}`), ['GET /files/* @3', 'GET /health @5', 'POST /admin @7']);
+});

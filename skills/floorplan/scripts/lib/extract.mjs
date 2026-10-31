@@ -12,10 +12,54 @@ const lineIndex = (src) => {
 };
 
 const blank = (s) => s.replace(/[^\n]/g, ' ');
-// Strip comments while keeping offsets (so line numbers stay right).
-const stripCStyle = (src) => src
-  .replace(/\/\*[\s\S]*?\*\//g, blank)
-  .replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, pre) => pre + blank(m.slice(pre.length)));
+// Strip comments while keeping offsets (so line numbers stay right). Steps over string, template and regex
+// literals, so the `/*` in '/files/*' or the `//` in "http://x" isn't taken for a comment.
+const REGEX_BEFORE = new Set('(,=:[!&|?{};+-*%~^');
+function stripCStyle(src) {
+  const n = src.length;
+  const tpl = []; // brace depth inside each open template `${`
+  let out = '', from = 0, prev = '';
+  const quoted = (j, q) => { // ' and " strings end at their quote or the line
+    for (j++; j < n; j++) { const c = src[j]; if (c === '\\') j++; else if (c === q) return j + 1; else if (c === '\n') return j; }
+    return n;
+  };
+  const template = (j) => { // from inside a template to past its closing ` (or into a `${`)
+    for (; j < n; j++) {
+      const c = src[j];
+      if (c === '\\') j++;
+      else if (c === '`') return j + 1;
+      else if (c === '$' && src[j + 1] === '{') { tpl.push(0); return j + 2; }
+    }
+    return n;
+  };
+  const regex = (j) => {
+    for (let cls = false, c; ++j < n && (c = src[j]) !== '\n';) {
+      if (c === '\\') j++;
+      else if (cls) cls = c !== ']';
+      else if (c === '[') cls = true;
+      else if (c === '/') return j + 1;
+    }
+    return j;
+  };
+  for (let i = 0; i < n;) {
+    const c = src[i];
+    if (c === '/' && (src[i + 1] === '/' || src[i + 1] === '*')) {
+      const k = src[i + 1] === '/' ? src.indexOf('\n', i) : src.indexOf('*/', i + 2);
+      const end = k < 0 ? n : src[i + 1] === '/' ? k : k + 2;
+      out += src.slice(from, i) + blank(src.slice(i, end));
+      from = i = end;
+    } else if (c === '"' || c === "'") { i = quoted(i, c); prev = c; }
+    else if (c === '`') { i = template(i + 1); prev = c; }
+    else if (c === '}' && tpl.length && tpl[tpl.length - 1]-- === 0) { tpl.pop(); i = template(i + 1); prev = '`'; }
+    else if (c === '/' && (!prev || REGEX_BEFORE.has(prev))) { i = regex(i); prev = c; }
+    else {
+      if (c === '{' && tpl.length) tpl[tpl.length - 1]++;
+      if (c > ' ') prev = c;
+      i++;
+    }
+  }
+  return out + src.slice(from);
+}
 const stripHash = (src) => src.replace(/(^|\s)#[^\n]*/g, (m, pre) => pre + blank(m.slice(pre.length)));
 
 const all = (re, s) => [...s.matchAll(re)];
@@ -188,7 +232,7 @@ function extractJs(src, filePath) {
   }
   for (const m of all(/\b([A-Za-z_$][\w$]*)\.(use|route)\(\s*["'`](\/[^"'`]*)["'`]\s*,([^\n;]*)/g, code)) {
     const req = /require\(\s*["']([^"']+)["']\s*\)/.exec(m[4]);
-    const mw = (m[4].split(',').map((s) => s.trim()).filter((s) => /^[A-Za-z_$][w$.]*$/.test(s))).map((s) => s.split('.').pop());
+    const mw = (m[4].split(',').map((s) => s.trim()).filter((s) => /^[A-Za-z_$][\w$.]*$/.test(s))).map((s) => s.split('.').pop());
     if (req) { mounts.push({ prefix: m[3], spec: req[1], line: at(m.index), ...(mw.length ? { mw } : {}) }); continue; }
     const args = m[4].replace(/\)\s*$/, '').split(',').map((s) => s.trim()).filter((s) => /^[A-Za-z_$][\w$.]*$/.test(s));
     if (args.length) mounts.push({ prefix: m[3], var: args[args.length - 1], line: at(m.index), ...(args.length > 1 ? { mw: args.slice(0, -1).map((s) => s.split('.').pop()) } : {}) });
