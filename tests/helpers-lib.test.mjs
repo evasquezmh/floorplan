@@ -44,6 +44,7 @@ test('classify: code, docs, lock files, assets and generated files', () => {
 
 test('parseArgs: positionals, --flag value, --flag=value and bare flags', () => {
   assert.deepEqual(parseArgs(['root', '--port', '9', '--no-open', '--x=1']), { _: ['root'], port: '9', 'no-open': true, x: '1' });
+  assert.deepEqual(parseArgs(['--model=a=b', '--empty=']), { _: [], model: 'a=b', empty: '' }, 'a value keeps everything after the first =');
 });
 
 test('fallback names read like plain words', () => {
